@@ -41,9 +41,8 @@ if "pdf_processed" not in st.session_state:
     # To track when the PDF is processed and stored
     st.session_state["pdf_processed"] = False
 
-# Function to upload the PDF file
 
-
+# This function handles the file upload process within a Streamlit app and returns the uploaded file.
 def upload_pdf():
     """Handle the file upload and return the uploaded file."""
     uploaded_file = st.file_uploader("Upload your PDF file", type=["pdf"])
@@ -56,9 +55,8 @@ def upload_pdf():
         st.session_state["uploaded_file"] = uploaded_file
     return uploaded_file
 
-# Function to process the PDF document
 
-
+# This function processes the uploaded PDF file and stores its content in a Qdrant vector database.
 def process_pdf(uploaded_file):
     """Process the uploaded PDF file, create chunks, and store in vector DB."""
     if uploaded_file is not None:
@@ -73,14 +71,14 @@ def process_pdf(uploaded_file):
 
         # Split the document into chunks
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,  # Adjust as needed
-            chunk_overlap=200  # Adjust as needed
+            chunk_size=300,  # Adjust as needed
+            chunk_overlap=40  # Adjust as needed
         )
         chunks = text_splitter.create_documents([document_text])
 
         # Create the embedding model
         embedding_model = OpenAIEmbeddings(
-            openai_api_key=OPENAI_API_KEY, model="text-embedding-ada-002"
+            openai_api_key=OPENAI_API_KEY, model="text-embedding-3-small"
         )
 
         # Send the chunks to the Qdrant vector DB
@@ -88,15 +86,13 @@ def process_pdf(uploaded_file):
             st.session_state["data_stored"] = True
             st.session_state["pdf_processed"] = True
             st.success("Document successfully stored in the vector database.")
-            # st.success("آپ اپنا سوال پوچھ سکتے ہیں")  # Success message in Urdu
         else:
             st.error("Failed to store the document in the vector database.")
     else:
         st.error("Please upload a valid PDF file.")
 
-# Function to send document chunks to the Qdrant vector database
 
-
+# This function sends document chunks (with their embeddings) to the Qdrant vector database for storage.
 def send_to_qdrant(documents, embedding_model):
     """Send the document chunks to the Qdrant vector database."""
     try:
@@ -114,95 +110,148 @@ def send_to_qdrant(documents, embedding_model):
         st.error(f"Failed to store data in the vector DB: {str(ex)}")
         return False
 
-# Qdrant client setup
 
-
+# This function initializes a Qdrant client and returns a vector store object.
 def qdrant_client():
     """Initialize Qdrant client and return the vector store."""
+
+    # Initialize the embedding model using OpenAI's text-embedding-ada-002 model.
+    # This model will generate 1536-dimensional embeddings from text.
     embedding_model = OpenAIEmbeddings(
         openai_api_key=OPENAI_API_KEY, model="text-embedding-ada-002"
     )
+
+    # Initialize the Qdrant client with the provided Qdrant URL and API key.
+    # This client will interact with the Qdrant vector database where embeddings are stored.
     qdrant_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
+
+    # Create the Qdrant vector store that will be used to store and retrieve document embeddings.
+    # The vector store is associated with the specified collection "xeven_voicebot".
     qdrant_store = Qdrant(
-        client=qdrant_client,
+        client=qdrant_client,                # The Qdrant client instance
+        # The name of the collection to store embeddings
         collection_name="xeven_voicebot",
-        embeddings=embedding_model
+        embeddings=embedding_model           # The embedding model used to generate vectors
     )
+
+    # Return the Qdrant vector store for use in storing and querying embeddings.
     return qdrant_store
 
-# Function to process audio input to text (speech-to-text in Urdu)
 
-
+# This function captures audio input from the user's microphone and converts it to text using a speech-to-text engine.
 def process_audio_input():
     """Capture audio from mic and convert it to text using speech-to-text."""
+
+    # Generate a unique key for this recording session based on the recording key in session state
     unique_key = f"STT-{st.session_state['recording_key']}"
+
+    # Capture audio input from the mic and convert it to text (using Urdu as the language)
     transcribed_text = speech_to_text(
-        language='ur',
+        language='ur',               # Set language to Urdu for speech recognition
+        # Ensure the widget adapts to the container width in the UI
         use_container_width=True,
-        just_once=True,
-        key=unique_key
+        just_once=True,              # Capture audio only once for simplicity
+        key=unique_key               # Unique key for this specific recording session
     )
+
+    # Return the transcribed text for further use
     return transcribed_text
 
-# Function to convert text to speech (TTS in Urdu)
 
-
+# Converts text to speech in the specified language using gTTS and returns the audio data.
 def text_to_speech(text, lang='ur'):
     """Convert the assistant's response to audio in Urdu using gTTS."""
+
+    # Initialize gTTS with the given text and language
     tts = gTTS(text=text, lang=lang)
+
+    # Create an in-memory buffer for audio data
     audio_data = BytesIO()
+
+    # Write the generated audio to the buffer
     tts.write_to_fp(audio_data)
+
+    # Reset buffer to the start
     audio_data.seek(0)
+
+    # Return the audio data
     return audio_data
 
-# Function to send query to the Qdrant vector store and generate a response
 
-
+# Sends a query to the Qdrant vector store and generates a response using a GPT model
 def qa_ret(qdrant_store, input_query):
     """Retrieve relevant documents and generate a response from the AI model."""
     try:
+        # Define the template for generating responses, including context and the user's question.
         template = """
-        آپ ایک مددگار اسسٹنٹ ہیں جو درج ذیل مواد کی بنیاد پر صارف کے سوالات کے جوابات دیتا ہے:
+        You are a helpful and dedicated female assistant. Your primary role is to assist the user by providing accurate
+        and thoughtful answers based on the given context. If the user asks any questions related to the provided
+        information, respond in a courteous and professional manner.
+        **Note:** Always provide your responses in Roman Urdu (Hinglish) to maintain the preferred language format.
         {context}
-        اگر آپ کو متعلقہ معلومات نہ ملیں تو صرف کہیں 'مجھے کوئی اور سوال پوچھیں'۔
-        جواب 3 سطروں سے زیادہ نہیں ہونا چاہئے۔
-        سوال: {question}
+        **Question:** {question}
         """
+        # Create a chat prompt template based on the defined template
         prompt = ChatPromptTemplate.from_template(template)
+
+        # Configure Qdrant to retrieve relevant documents based on similarity search
         retriever = qdrant_store.as_retriever(
+            # Retrieve top 4 relevant results
             search_type="similarity", search_kwargs={"k": 4}
         )
+
+        # Set up parallel execution to retrieve context and pass it with the question
         setup_and_retrieval = RunnableParallel(
             {"context": retriever, "question": RunnablePassthrough()}
         )
+
+        # Initialize the GPT model (gpt-4o-mini) with a moderate creativity level
         model = ChatOpenAI(
-            model_name="gpt-3.5-turbo",
-            temperature=0,
+            model_name="gpt-4o-mini",
+            temperature=0.3,
             openai_api_key=OPENAI_API_KEY
         )
+
+        # Define an output parser to handle the response formatting
         output_parser = StrOutputParser()
+
+        # Chain the setup, prompt, model, and output parsing into one pipeline
         rag_chain = setup_and_retrieval | prompt | model | output_parser
+
+        # Generate and return the response using the input query
         response = rag_chain.invoke(input_query)
         return response
+
+    # Handle any exceptions and return an error message
     except Exception as ex:
         return f"Error: {str(ex)}"
 
-# Function to display chat history
 
-
+# Displays the chat history, including user inputs and assistant responses.
+# 1. Iterates over the chat history stored in session state.
+# 2. For each message, displays the user input and assistant's response.
+# 3. Also plays the assistant's response in audio format (if available).
 def display_chat_history():
     """Display the chat history."""
+    
+    # Iterate over each chat entry in the chat history stored in session state
     for chat in st.session_state["chat_history"]:
+        
+        # Display the user's input in a chat message format
         with st.chat_message("user"):
-            st.write(f"**You:** {chat['user_input']}")
+            st.write(f"**You:** {chat['user_input']}")  # Show user input
+        
+        # Display the assistant's response in a chat message format
         with st.chat_message("assistant"):
-            st.write(f"**Bot:** {chat['bot_response']}")
-            st.audio(chat["bot_audio"], format="audio/mp3")
+            st.write(f"**Bot:** {chat['bot_response']}")  # Show assistant's response
+            st.audio(chat["bot_audio"], format="audio/mp3")  # Play the assistant's audio response
+        
+        # Display a horizontal divider after each chat entry
         st.write("---")
 
+
+
 # Function to display PDF preview
-
-
 def display_pdf_preview():
     """Display a preview of the uploaded PDF file in the right column."""
     if st.session_state["pdf_processed"]:
@@ -221,9 +270,8 @@ def display_pdf_preview():
             pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600px"></iframe>'
             st.markdown(pdf_display, unsafe_allow_html=True)
 
+
 # Main App Flow
-
-
 def main():
     # Set up the page configuration (title, layout, etc.)
     st.set_page_config(
