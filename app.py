@@ -163,7 +163,7 @@ def text_to_speech(text, lang='ur'):
     """Convert the assistant's response to audio in Urdu using gTTS."""
 
     # Initialize gTTS with the given text and language
-    tts = gTTS(text=text, lang=lang)
+    tts = gTTS(text=text, lang=lang, tld='com.au')
 
     # Create an in-memory buffer for audio data
     audio_data = BytesIO()
@@ -282,7 +282,7 @@ def main():
     )
 
     # Main Title
-    st.title("Voicebot - Chat with Your Documents")
+    st.title("📄 Voicebot - Chat with Your Documents")
 
     # Subheader
     st.subheader(
